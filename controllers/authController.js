@@ -11,20 +11,10 @@ const sendOtp = async (req, res) => {
     try {
         const { name, mobile, password } = req.body;
 
-        if (!name || !mobile || !password) {
+        if (!mobile) {
             return res.status(400).json({
                 success: false,
-                message: "Name, mobile number and password are required"
-            });
-        }
-
-        const trimmedName = String(name).trim();
-        const trimmedPassword = String(password).trim();
-
-        if (!trimmedName || trimmedPassword.length < 6) {
-            return res.status(400).json({
-                success: false,
-                message: "Name is required and password must be at least 6 characters"
+                message: "Mobile number is required"
             });
         }
 
@@ -38,6 +28,53 @@ const sendOtp = async (req, res) => {
         }
 
         const existingUser = await User.findOne({ mobile: normalizedMobile });
+        const isRegistration = Boolean(name || password);
+
+        if (!isRegistration) {
+            if (!existingUser) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Mobile number is not registered"
+                });
+            }
+
+            const otp = generateOtp();
+
+            await Otp.deleteMany({ mobile: normalizedMobile });
+            await Otp.create({
+                mobile: normalizedMobile,
+                otp,
+                purpose: "LOGIN",
+                expiresAt: new Date(Date.now() + OTP_TTL_MS)
+            });
+
+            await sendWhatsAppMessage(
+                normalizedMobile,
+                `Your BarkatWork login OTP is ${otp}. It expires in 5 minutes.`
+            );
+
+            return res.status(200).json({
+                success: true,
+                message: "Login OTP sent successfully on WhatsApp"
+            });
+        }
+
+        if (!name || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Name, mobile number and password are required for registration"
+            });
+        }
+
+        const trimmedName = String(name).trim();
+        const trimmedPassword = String(password).trim();
+
+        if (!trimmedName || trimmedPassword.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: "Name is required and password must be at least 6 characters"
+            });
+        }
 
         if (existingUser) {
             return res.status(409).json({
@@ -55,6 +92,7 @@ const sendOtp = async (req, res) => {
         await Otp.create({
             mobile: normalizedMobile,
             otp,
+            purpose: "REGISTER",
             name: trimmedName,
             passwordHash: `${passwordSalt}:${passwordHash}`,
             expiresAt: new Date(Date.now() + OTP_TTL_MS)
@@ -116,12 +154,25 @@ const verifyOtp = async (req, res) => {
             });
         }
 
-        const user = await User.create({
-            name: otpRecord.name,
-            mobile: otpRecord.mobile,
-            passwordHash: otpRecord.passwordHash,
-            isVerified: true
-        });
+        let user;
+
+        if (otpRecord.purpose === "REGISTER") {
+            user = await User.create({
+                name: otpRecord.name,
+                mobile: otpRecord.mobile,
+                passwordHash: otpRecord.passwordHash,
+                isVerified: true
+            });
+        } else {
+            user = await User.findOne({ mobile: otpRecord.mobile });
+
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found"
+                });
+            }
+        }
 
         const token = issueJwt(user);
 
@@ -135,7 +186,9 @@ const verifyOtp = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-            message: "Registration successful",
+            message: otpRecord.purpose === "REGISTER"
+                ? "Registration successful"
+                : "Login successful",
             token,
             user: safeUser,
             nextScreen: "HOME"
