@@ -28,16 +28,8 @@ const sendOtp = async (req, res) => {
         }
 
         const existingUser = await User.findOne({ mobile: normalizedMobile });
-        const isRegistration = Boolean(name || password);
 
-        if (!isRegistration) {
-            if (!existingUser) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Mobile number is not registered"
-                });
-            }
-
+        if (existingUser) {
             const otp = generateOtp();
 
             await Otp.deleteMany({ mobile: normalizedMobile });
