@@ -100,9 +100,11 @@ const sendOtp = async (req, res) => {
             message: "OTP sent successfully on WhatsApp"
         });
     } catch (error) {
+        console.error("SEND OTP ERROR:", error);
         return res.status(500).json({
             success: false,
-            message: error.message
+            message: "OTP service is temporarily unavailable",
+            detail: error.message
         });
     }
 };

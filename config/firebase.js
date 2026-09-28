@@ -9,9 +9,15 @@ const getFirestore = () => {
 
     if (!admin.apps.length) {
         const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-        const serviceAccount = serviceAccountJson
-            ? JSON.parse(serviceAccountJson)
-            : null;
+        let serviceAccount = null;
+
+        if (serviceAccountJson) {
+            try {
+                serviceAccount = JSON.parse(serviceAccountJson);
+            } catch {
+                throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON.");
+            }
+        }
 
         if (serviceAccount) {
             admin.initializeApp({
@@ -26,9 +32,9 @@ const getFirestore = () => {
                 })
             });
         } else {
-            admin.initializeApp({
-                credential: admin.credential.applicationDefault()
-            });
+            throw new Error(
+                "Firebase credentials are missing. Configure FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY."
+            );
         }
     }
 
