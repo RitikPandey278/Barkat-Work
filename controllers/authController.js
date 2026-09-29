@@ -9,7 +9,7 @@ const OTP_TTL_MS = 5 * 60 * 1000;
 
 const sendOtp = async (req, res) => {
     try {
-        const { name, mobile, password } = req.body;
+        const { name, mobile, password, isLogin } = req.body;
 
         if (!mobile) {
             return res.status(400).json({
@@ -29,6 +29,13 @@ const sendOtp = async (req, res) => {
 
         const existingUser = await User.findOne({ mobile: normalizedMobile });
 
+        if ((isLogin === true || isLogin === "true") && !existingUser) {
+            return res.status(404).json({
+                success: false,
+                message: "Account is not registered. Please sign up first."
+            });
+        }
+
         if (existingUser) {
             const otp = generateOtp();
 
@@ -47,7 +54,8 @@ const sendOtp = async (req, res) => {
 
             return res.status(200).json({
                 success: true,
-                message: "Login OTP sent successfully on WhatsApp"
+                message: "Login OTP sent successfully on WhatsApp",
+                isNewUser: false
             });
         }
 
@@ -65,13 +73,6 @@ const sendOtp = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: "Name is required and password must be at least 6 characters"
-            });
-        }
-
-        if (existingUser) {
-            return res.status(409).json({
-                success: false,
-                message: "Mobile number is already registered"
             });
         }
 
@@ -97,7 +98,8 @@ const sendOtp = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-            message: "OTP sent successfully on WhatsApp"
+            message: "Signup OTP sent successfully on WhatsApp",
+            isNewUser: true
         });
     } catch (error) {
         console.error("SEND OTP ERROR:", error);
@@ -165,6 +167,11 @@ const verifyOtp = async (req, res) => {
                     success: false,
                     message: "User not found"
                 });
+            }
+
+            if (!user.isVerified) {
+                user.isVerified = true;
+                await user.save();
             }
         }
 

@@ -3,7 +3,9 @@ const mongoose = require("mongoose");
 const userSchema = new mongoose.Schema({
     name: { type: String, default: "" },
     mobile: { type: String, required: true, unique: true, trim: true },
-    passwordHash: { type: String, required: true, select: false },
+    passwordHash: { type: String, default: null, select: false },
+    isVerified: { type: Boolean, default: false },
+    role: { type: String, enum: ["USER", "ADMIN"], default: "USER" },
     // email: { type: String, default: "" },
     // gender: { type: String, enum: ["Male", "Female", "Other"], default: null },
     // dateOfBirth: { type: Date, default: null },

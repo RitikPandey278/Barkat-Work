@@ -19,6 +19,10 @@ const toCountryCodeMobile = (mobile) => {
 };
 
 const getApiToken = async () => {
+    if (process.env.WHATSAPP_API_TOKEN) {
+        return process.env.WHATSAPP_API_TOKEN.trim();
+    }
+
     const snapshot = await getFirestore()
         .collection("AppConfig")
         .doc("WhatsAppAPI")
