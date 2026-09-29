@@ -1,62 +1,52 @@
-const admin = require("firebase-admin");
+const { cert, getApps, initializeApp } = require("firebase-admin/app");
+const { getFirestore: getAdminFirestore } = require("firebase-admin/firestore");
 
 let firestore;
 
-const createFirebaseCredential = (serviceAccount) => {
-    const projectId = serviceAccount?.projectId || serviceAccount?.project_id;
-    const clientEmail = serviceAccount?.clientEmail || serviceAccount?.client_email;
-    const privateKey = serviceAccount?.privateKey || serviceAccount?.private_key;
-
-    if (!projectId || !clientEmail || !privateKey || typeof privateKey !== "string") {
-        throw new Error(
-            "Firebase service account is incomplete. Project ID, client email and private key are required."
-        );
+const getCredential = () => {
+    // 1. Check JSON string configuration first
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+        let account;
+        try {
+            account = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+        } catch {
+            throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON must be valid JSON.");
+        }
+        return cert({
+            projectId: account.projectId || account.project_id,
+            clientEmail: account.clientEmail || account.client_email,
+            privateKey: String(account.privateKey || account.private_key || "").replace(/\\n/g, "\n")
+        });
     }
 
-    return admin.credential.cert({
-        projectId,
-        clientEmail,
-        privateKey: privateKey.replace(/\\n/g, "\n")
-    });
+    // 2. Check Individual Environment Variables
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (projectId && clientEmail && privateKey) {
+        // Extra quotes (") aur escaped \n ko clean karne ke liye:
+        privateKey = privateKey.trim();
+        if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+            privateKey = privateKey.substring(1, privateKey.length - 1);
+        }
+        privateKey = privateKey.replace(/\\n/g, "\n");
+
+        return cert({
+            projectId,
+            clientEmail,
+            privateKey
+        });
+    }
+
+    throw new Error("Firebase credentials are not configured.");
 };
 
 const getFirestore = () => {
-    if (firestore) {
-        return firestore;
+    if (!firestore) {
+        if (getApps().length === 0) initializeApp({ credential: getCredential() });
+        firestore = getAdminFirestore();
     }
-
-    if (admin.getApps().length === 0) {
-        const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-        let serviceAccount = null;
-
-        if (serviceAccountJson) {
-            try {
-                serviceAccount = JSON.parse(serviceAccountJson);
-            } catch {
-                throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON.");
-            }
-        }
-
-        if (serviceAccount) {
-            admin.initializeApp({
-                credential: createFirebaseCredential(serviceAccount)
-            });
-        } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-            admin.initializeApp({
-                credential: createFirebaseCredential({
-                    projectId: process.env.FIREBASE_PROJECT_ID,
-                    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-                    privateKey: process.env.FIREBASE_PRIVATE_KEY
-                })
-            });
-        } else {
-            throw new Error(
-                "Firebase credentials are missing. Configure FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY."
-            );
-        }
-    }
-
-    firestore = admin.firestore();
     return firestore;
 };
 

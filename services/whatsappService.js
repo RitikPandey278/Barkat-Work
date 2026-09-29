@@ -4,196 +4,74 @@ const {
     DisconnectReason,
     fetchLatestBaileysVersion
 } = require("@whiskeysockets/baileys");
-
 const QRCode = require("qrcode");
 const path = require("path");
-const P = require("pino");
-const { createWhatsAppCommandHandler } = require("./whatsappCommandService");
-const { isDirectChatJid, normalizeMobileNumber } = require("../utils/whatsappIdentity");
+const pino = require("pino");
 
+const authDir = path.join(__dirname, "../auth_info_baileys");
+const qrPath = path.join(__dirname, "../qr.png");
+let socket = null;
+let reconnectTimer = null;
 
-let sock = null;
+const normalizeRecipient = (mobile) => {
+    const digits = String(mobile || "").replace(/\D/g, "");
+    if (digits.length === 10) return `91${digits}`;
+    if (/^\d{11,15}$/.test(digits)) return digits;
+    throw new Error("Invalid WhatsApp receiver number.");
+};
 
-// ================= CONNECT WHATSAPP =================
+const scheduleReconnect = () => {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWhatsApp();
+    }, 5000);
+};
 
-async function connectWhatsApp() {
-
+const connectWhatsApp = async () => {
     try {
-
-        const { state, saveCreds } =
-            await useMultiFileAuthState("./auth_info_baileys");
-
-        const { version } =
-            await fetchLatestBaileysVersion();
-
-        // Close old socket
-        if (sock) {
-            try {
-                sock.end();
-            } catch (e) {}
-        }
-
-        sock = makeWASocket({
+        const { state, saveCreds } = await useMultiFileAuthState(authDir);
+        const { version } = await fetchLatestBaileysVersion();
+        socket = makeWASocket({
             version,
             auth: state,
-            logger: P({ level: "silent" }),
+            logger: pino({ level: "silent" }),
             markOnlineOnConnect: false,
             syncFullHistory: false
         });
 
-        sock.ev.on("creds.update", saveCreds);
-
-        const handleIncomingMessage = createWhatsAppCommandHandler({
-            sendWhatsAppMessage
-        });
-
-        sock.ev.on("messages.upsert", async ({ messages }) => {
-        try{
-            const msg = messages[0];
-            if(!msg.message) return;
-
-            await handleIncomingMessage(msg);
-    }
-
-        catch(err){
-            console.log(err);
-        }
-    });
-
-    sock.ev.on("connection.update", async ({
-            connection,
-            qr,
-            lastDisconnect
-        }) => {
-
+        socket.ev.on("creds.update", saveCreds);
+        socket.ev.on("connection.update", async ({ connection, qr, lastDisconnect }) => {
             if (qr) {
-
-                const qrPath = path.join(__dirname, "../qr.png");
-
-                try {
-
-                    await QRCode.toFile(qrPath, qr);
-
-                    console.log("\n==============================");
-                    console.log("✅ QR Saved");
-                    console.log("Scan : backend/qr.png");
-                    console.log("==============================\n");
-
-                } catch (err) {
-                    console.log(err);
-                }
-
+                await QRCode.toFile(qrPath, qr);
+                console.log(`Scan QR: ${qrPath}`);
             }
-
-            if (connection === "connecting") {
-                console.log("🟡 Connecting...");
-            }
-
-            if (connection === "open") {
-                console.log("🟢 WhatsApp Connected Successfully");
-            }
-
+            if (connection === "open") console.log("WhatsApp connected");
             if (connection === "close") {
-
-                console.log("🔴 WhatsApp Disconnected");
-
-                const statusCode =
-                    lastDisconnect?.error?.output?.statusCode;
-
-                console.log("Status Code :", statusCode);
-
-                console.log("Reason :", lastDisconnect?.error);
-
-                const shouldReconnect =
-                    statusCode !== DisconnectReason.loggedOut;
-
-                if (shouldReconnect) {
-
-                    console.log("♻ Reconnecting after 5 seconds...");
-
-                    setTimeout(() => {
-                        connectWhatsApp();
-                    }, 5000);
-
-                } else {
-
-                    console.log("❌ Logged Out");
-                    console.log("Please Scan QR Again");
-
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                socket = null;
+                console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
+                if (statusCode === 440 || statusCode === DisconnectReason.loggedOut) {
+                    console.log("Unlink the old WhatsApp device and pair again.");
+                    return;
                 }
-
+                scheduleReconnect();
             }
-
         });
-
     } catch (error) {
-
-        console.log("WhatsApp Connection Error");
-        console.log(error);
-
-        setTimeout(() => {
-            connectWhatsApp();
-        }, 5000);
-
+        console.error("WhatsApp connection error:", error.message);
+        scheduleReconnect();
     }
+};
 
-
-}
-
-// ================= SEND MESSAGE =================
-
-async function sendWhatsAppMessage(number, message) {
-
-    if (!sock) {
-        throw new Error("WhatsApp is not connected.");
-    }
-
-    if (!message || typeof message !== "string") {
-        throw new Error("Message is required.");
-    }
-
-    const target = typeof number === "string" ? number.trim() : "";
-
-    if (!target) {
-        throw new Error("Invalid WhatsApp target.");
-    }
-
-    if (target.includes("@")) {
-        if (!isDirectChatJid(target)) {
-            throw new Error("Invalid WhatsApp target.");
-        }
-
-        await sock.sendMessage(target, { text: message });
-
-        return;
-    }
-
-    const mobile = normalizeMobileNumber(target);
-
-    if (!mobile) {
-        throw new Error("Invalid mobile number.");
-    }
-
-    const result = await sock.onWhatsApp(mobile);
-
-    if (!result || result.length === 0 || !result[0].exists) {
+const sendWhatsAppMessage = async (mobile, message) => {
+    if (!socket) throw new Error("WhatsApp is not connected. Scan backend/qr.png first.");
+    const recipient = normalizeRecipient(mobile);
+    const available = await socket.onWhatsApp(recipient);
+    if (!available?.some((entry) => entry.exists)) {
         throw new Error("This number is not available on WhatsApp.");
     }
-
-    await sock.sendMessage(result[0].jid, { text: message });
-
-    return;
-
-}
-
-// ================= GET SOCKET =================
-
-function getSocket() {
-    return sock;
-}
-
-module.exports = {
-    connectWhatsApp,
-    sendWhatsAppMessage,
-    getSocket
+    await socket.sendMessage(`${recipient}@s.whatsapp.net`, { text: message });
 };
+
+module.exports = { connectWhatsApp, sendWhatsAppMessage };
