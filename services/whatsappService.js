@@ -74,4 +74,85 @@ const sendWhatsAppMessage = async (mobile, message) => {
     await socket.sendMessage(`${recipient}@s.whatsapp.net`, { text: message });
 };
 
-module.exports = { connectWhatsApp, sendWhatsAppMessage };
+const sendJobBroadcast = async (jobData) => {
+    if (!socket) {
+        console.log(
+            "WhatsApp socket is not connected yet, skipping broadcast"
+        );
+        return;
+    }
+
+    try {
+        const { getFirestore } = require("../config/firebase");
+        const db = getFirestore();
+
+        // Sirf opted-in users ko notification bhejo
+        const snapshot = await db.collection("Users")
+            .where("whatsappNotifications", "==", true)
+            .get();
+
+        const playStoreLink =
+            `https://barkat-work.onrender.com/job/${jobData.id}`;
+
+        const messageText =
+`🔔 *BarkatWork: Nayi Job Vacancy!* 🔔
+
+📌 *Kaam:* ${jobData.title} (${jobData.category || "General"})
+📍 *Location:* ${jobData.location || "Not specified"}
+💰 *Dihadi/Budget:* ${jobData.budget || "Negotiable"}
+
+📲 *Full Details Dekhein & Apply Karein:*
+${playStoreLink}`;
+
+        for (const doc of snapshot.docs) {
+            const user = doc.data();
+
+            if (!user.mobile) {
+                continue;
+            }
+
+            try {
+                const recipient = normalizeRecipient(user.mobile);
+
+                const available = await socket.onWhatsApp(recipient);
+
+                if (!available?.some((entry) => entry.exists)) {
+                    console.log(
+                        "Not available on WhatsApp:",
+                        recipient
+                    );
+                    continue;
+                }
+
+                await socket.sendMessage(
+                    `${recipient}@s.whatsapp.net`,
+                    { text: messageText }
+                );
+
+                console.log(
+                    "WhatsApp Job Broadcast Sent To:",
+                    recipient
+                );
+
+            } catch (error) {
+                console.log(
+                    "WhatsApp Broadcast Failed:",
+                    user.mobile,
+                    error.message
+                );
+            }
+        }
+
+    } catch (error) {
+        console.error(
+            "WhatsApp Job Broadcast Failed:",
+            error.message
+        );
+    }
+};
+
+module.exports = {
+    connectWhatsApp,
+    sendWhatsAppMessage,
+    sendJobBroadcast
+};
