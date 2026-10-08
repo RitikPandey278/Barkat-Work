@@ -201,6 +201,19 @@ createdAt
 updatedAt (after login verification)
 ```
 
+### `Seekers` job notifications
+
+Job broadcasts read both `Users` and `Seekers`. A profile matches a job when
+its `skill`/`category` and `location`/`city` match the job's
+`category`/`title` and `location`/`city` (case-insensitive partial matching).
+The profile can provide `mobile` or `phone`. Set `whatsappNotifications` or
+`pushNotifications` to `false` to opt out.
+
+For direct OneSignal push delivery, store the subscription ID in
+`oneSignalPlayerId`, `onesignalPlayerId`, or `playerId`. If no matching profile
+has a player ID, the service falls back to the existing OneSignal `category`
+and `city` tags.
+
 The preferred document ID is the normalized mobile number. A query by `mobile` also supports older or differently keyed documents.
 
 ### `otpRequests` collection

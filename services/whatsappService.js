@@ -7,6 +7,7 @@ const {
 const QRCode = require("qrcode");
 const path = require("path");
 const pino = require("pino");
+const { getMobile, profileMatchesJob } = require("./jobMatching");
 
 const authDir = path.join(__dirname, "../auth_info_baileys");
 const qrPath = path.join(__dirname, "../qr.png");
@@ -86,10 +87,40 @@ const sendJobBroadcast = async (jobData) => {
         const { getFirestore } = require("../config/firebase");
         const db = getFirestore();
 
-        // Sirf opted-in users ko notification bhejo
-        const snapshot = await db.collection("Users")
-            .where("whatsappNotifications", "==", true)
-            .get();
+        const [usersSnapshot, seekersSnapshot] = await Promise.all([
+            db.collection("Users").get(),
+            db.collection("Seekers").get()
+        ]);
+        const recipients = new Set();
+
+        for (const snapshot of [usersSnapshot, seekersSnapshot]) {
+            snapshot.forEach((doc) => {
+                const profile = doc.data();
+                if (
+                    profile.whatsappNotifications === false ||
+                    !profileMatchesJob(profile, jobData)
+                ) {
+                    return;
+                }
+
+                const mobile = getMobile(profile);
+                if (!mobile) return;
+
+                try {
+                    recipients.add(normalizeRecipient(mobile));
+                } catch (error) {
+                    console.log(
+                        "Skipping invalid WhatsApp number:",
+                        mobile,
+                        error.message
+                    );
+                }
+            });
+        }
+
+        console.log(
+            `Found ${recipients.size} matching WhatsApp recipients.`
+        );
 
         const playStoreLink =
             `https://barkat-work.onrender.com/job/${jobData.id}`;
@@ -104,16 +135,8 @@ const sendJobBroadcast = async (jobData) => {
 📲 *Full Details Dekhein & Apply Karein:*
 ${playStoreLink}`;
 
-        for (const doc of snapshot.docs) {
-            const user = doc.data();
-
-            if (!user.mobile) {
-                continue;
-            }
-
+        for (const recipient of recipients) {
             try {
-                const recipient = normalizeRecipient(user.mobile);
-
                 const available = await socket.onWhatsApp(recipient);
 
                 if (!available?.some((entry) => entry.exists)) {
@@ -137,7 +160,7 @@ ${playStoreLink}`;
             } catch (error) {
                 console.log(
                     "WhatsApp Broadcast Failed:",
-                    user.mobile,
+                    recipient,
                     error.message
                 );
             }
