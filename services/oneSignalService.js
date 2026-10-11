@@ -9,6 +9,9 @@ exports.sendPhoneNotification = async (jobData) => {
     try {
         const appId = process.env.ONESIGNAL_APP_ID;
         const apiKey = process.env.ONESIGNAL_API_KEY;
+        console.log("🔔 OneSignal job:", jobData.id);
+        console.log("🔔 App ID configured:", Boolean(appId));
+        console.log("🔔 API key configured:", Boolean(apiKey));
         if (!appId || !apiKey) {
             console.error(
                 "OneSignal is not configured. Set ONESIGNAL_APP_ID and ONESIGNAL_API_KEY."
@@ -39,6 +42,8 @@ exports.sendPhoneNotification = async (jobData) => {
             });
         }
 
+        console.log("🔔 Matched player IDs:", playerIds.size);
+
         const payload = {
             app_id: appId,
             headings: { en: "🔧 Nayi Job Vacancy Aayi Hai!" },
@@ -63,9 +68,20 @@ exports.sendPhoneNotification = async (jobData) => {
             }
         });
 
-        console.log("OneSignal Push Sent:", response.data);
+        console.log(
+            "🔔 OneSignal API response:",
+            JSON.stringify(response.data)
+        );
 
     } catch (error) {
-        console.error("OneSignal Error:", error.response ? error.response.data : error.message);
+        console.error(
+            "❌ OneSignal HTTP status:",
+            error.response?.status
+        );
+        console.error(
+            "❌ OneSignal response:",
+            JSON.stringify(error.response?.data || error.message)
+        );
+        throw error;
     }
 };
