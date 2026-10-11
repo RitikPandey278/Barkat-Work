@@ -5,14 +5,22 @@ const router = express.Router();
 const aiController = require("../controllers/aiController");
 const profileAssistantController =
     require("../controllers/profileAssistantController");
+const jobPostAssistantController =
+    require("../controllers/jobPostAssistantController");
 
-// Existing AI Search: Jobs and Workers
+// Existing AI Search
 router.post("/search", aiController.smartSearch);
 
-// New AI Worker Profile Assistant
+// Existing Worker Profile Assistant
 router.post(
     "/profile-assistant",
     profileAssistantController.chat
+);
+
+// New Recruiter Job Post Assistant
+router.post(
+    "/job-post-assistant",
+    jobPostAssistantController.chat
 );
 
 module.exports = router;
