@@ -3,6 +3,7 @@ const cors = require("cors");
 const authRoutes = require("./routers/authRoutes");
 const aiRoutes = require('./routers/aiRoutes');
 const jobRoutes = require('./routers/jobRoutes');
+const whatsappRoutes = require("./routers/whatsappRoutes");
 
 const app = express();
 app.disable("x-powered-by");
@@ -15,6 +16,7 @@ app.get("/", (req, res) => res.json({ success: true, message: "Welcome to Barkat
 app.use('/api/ai', aiRoutes);
 
 app.use('/api/jobs', jobRoutes);
+app.use("/api/admin/whatsapp", whatsappRoutes);
 
 // 🌐 Deep Link Web Redirect Page
 app.get('/job/:id', (req, res) => {

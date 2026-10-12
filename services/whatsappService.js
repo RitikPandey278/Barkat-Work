@@ -6,13 +6,38 @@ const {
 } = require("@whiskeysockets/baileys");
 const QRCode = require("qrcode");
 const path = require("path");
+const fs = require("fs");
 const pino = require("pino");
 const { getMobile, profileMatchesJob } = require("./jobMatching");
 
 const authDir = path.join(__dirname, "../auth_info_baileys");
-const qrPath = path.join(__dirname, "../qr.png");
 let socket = null;
 let reconnectTimer = null;
+let qrTimer = null;
+let qrDataUrl = null;
+let qrExpiresAt = null;
+let status = "DISCONNECTED";
+let connectedNumber = null;
+let manualDisconnect = false;
+let connectionPromise = null;
+
+const QR_TTL_MS = 5 * 60 * 1000;
+
+const clearQr = () => {
+    if (qrTimer) clearTimeout(qrTimer);
+    qrTimer = null;
+    qrDataUrl = null;
+    qrExpiresAt = null;
+};
+
+const getStatus = () => ({
+    status,
+    connected: status === "CONNECTED",
+    connectedNumber,
+    qr: qrDataUrl,
+    qrExpiresAt,
+    qrAvailable: Boolean(qrDataUrl && qrExpiresAt > Date.now())
+});
 
 const normalizeRecipient = (mobile) => {
     const digits = String(mobile || "").replace(/\D/g, "");
@@ -22,15 +47,24 @@ const normalizeRecipient = (mobile) => {
 };
 
 const scheduleReconnect = () => {
-    if (reconnectTimer) return;
+    if (manualDisconnect || reconnectTimer) return;
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connectWhatsApp();
     }, 5000);
 };
 
-const connectWhatsApp = async () => {
+const connectWhatsApp = async ({ resetSession = false } = {}) => {
+    if (connectionPromise) return connectionPromise;
+
+    connectionPromise = (async () => {
     try {
+        manualDisconnect = false;
+        clearQr();
+        status = "CONNECTING";
+        if (resetSession) {
+            await disconnectWhatsApp({ clearAuth: true, reconnect: false });
+        }
         const { state, saveCreds } = await useMultiFileAuthState(authDir);
         const { version } = await fetchLatestBaileysVersion();
         socket = makeWASocket({
@@ -44,29 +78,81 @@ const connectWhatsApp = async () => {
         socket.ev.on("creds.update", saveCreds);
         socket.ev.on("connection.update", async ({ connection, qr, lastDisconnect }) => {
             if (qr) {
-                await QRCode.toFile(qrPath, qr);
-                console.log(`Scan QR: ${qrPath}`);
+                status = "QR_READY";
+                qrDataUrl = await QRCode.toDataURL(qr);
+                qrExpiresAt = Date.now() + QR_TTL_MS;
+                if (qrTimer) clearTimeout(qrTimer);
+                qrTimer = setTimeout(() => {
+                    clearQr();
+                    status = "DISCONNECTED";
+                }, QR_TTL_MS);
             }
-            if (connection === "open") console.log("WhatsApp connected");
+            if (connection === "open") {
+                clearQr();
+                status = "CONNECTED";
+                connectedNumber = socket?.user?.id?.split(":")[0] || null;
+                console.log("WhatsApp connected");
+            }
             if (connection === "close") {
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 socket = null;
+                connectedNumber = null;
+                clearQr();
                 console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
-                if (statusCode === 440 || statusCode === DisconnectReason.loggedOut) {
-                    console.log("Unlink the old WhatsApp device and pair again.");
+                if (manualDisconnect || statusCode === 440 || statusCode === DisconnectReason.loggedOut) {
+                    status = "DISCONNECTED";
                     return;
                 }
+                status = "RECONNECTING";
                 scheduleReconnect();
             }
         });
+        return getStatus();
     } catch (error) {
+        status = "ERROR";
         console.error("WhatsApp connection error:", error.message);
         scheduleReconnect();
+        throw error;
+    }
+    })();
+
+    try {
+        return await connectionPromise;
+    } finally {
+        connectionPromise = null;
     }
 };
 
+const disconnectWhatsApp = async ({ clearAuth = true, reconnect = false } = {}) => {
+    manualDisconnect = !reconnect;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    clearQr();
+    if (socket) {
+        try {
+            if (clearAuth) await socket.logout();
+            else socket.ws?.close();
+        } catch (error) {
+            console.error("WhatsApp disconnect error:", error.message);
+        }
+    }
+    socket = null;
+    connectedNumber = null;
+    status = "DISCONNECTED";
+    if (clearAuth) {
+        await fs.promises.rm(authDir, { recursive: true, force: true });
+    }
+    if (reconnect) return connectWhatsApp({ resetSession: false });
+    return getStatus();
+};
+
+const getWhatsAppStatus = () => {
+    if (qrExpiresAt && qrExpiresAt <= Date.now()) clearQr();
+    return getStatus();
+};
+
 const sendWhatsAppMessage = async (mobile, message) => {
-    if (!socket) throw new Error("WhatsApp is not connected. Scan backend/qr.png first.");
+    if (!socket || status !== "CONNECTED") throw new Error("WhatsApp is not connected.");
     const recipient = normalizeRecipient(mobile);
     const available = await socket.onWhatsApp(recipient);
     if (!available?.some((entry) => entry.exists)) {
@@ -176,6 +262,8 @@ ${playStoreLink}`;
 
 module.exports = {
     connectWhatsApp,
+    disconnectWhatsApp,
+    getWhatsAppStatus,
     sendWhatsAppMessage,
     sendJobBroadcast
 };

@@ -233,21 +233,38 @@ After successful verification, the server signs this payload:
 }
 ```
 
-The signing secret comes from `JWT_SECRET`. Token lifetime is 30 days. There is currently no middleware in this backend that verifies the token for protected routes because only authentication routes are present.
+The signing secret comes from `JWT_SECRET`. Token lifetime is 30 days. Admin WhatsApp routes verify this token and require `role: "ADMIN"`.
 
-## 8. File inventory
+## 8. Admin WhatsApp connection
+
+The admin panel can manage the single linked WhatsApp session without editing backend files or redeploying:
+
+- `GET /api/admin/whatsapp/status`
+- `POST /api/admin/whatsapp/connect`
+- `POST /api/admin/whatsapp/disconnect`
+
+Each request requires `Authorization: Bearer <admin-jwt>`. The admin user must have `role: "ADMIN"` in the `Users` Firestore document.
+
+`connect` logs out and clears the previous session before starting a new Baileys session. The QR is returned as a data URL by `status`, expires after five minutes, and is held only in process memory. After scanning, the status becomes `CONNECTED` and the connected number is returned. `disconnect` logs out the linked device, removes the local auth state, clears the QR, and returns the service to `DISCONNECTED`.
+
+The WhatsApp socket requires a persistent server process. It should not be hosted only in a normal Vercel serverless function.
+
+## 9. File inventory
 
 ### Application files
 
 | File | Responsibility |
 |---|---|
 | `Server.js` | Loads environment variables, mounts root health check, starts local WhatsApp and HTTP server, and runs Render keep-alive ping. |
-| `app.js` | Creates Express app, enables CORS and JSON parsing, mounts `/api/auth`. |
+| `app.js` | Creates Express app, enables CORS and JSON parsing, mounts auth, job, AI, and admin WhatsApp routes. |
 | `api/index.js` | Exports the Express app for Vercel serverless deployment. |
 | `routers/authRoutes.js` | Defines send-OTP and verify-OTP routes. |
+| `routers/whatsappRoutes.js` | Defines protected admin WhatsApp status, connect, and disconnect routes. |
+| `controllers/whatsappController.js` | Returns admin WhatsApp status and handles connect/disconnect requests. |
+| `middleware/adminMiddleware.js` | Verifies the JWT and restricts WhatsApp management to admins. |
 | `controllers/authController.js` | Validates request input, selects login/registration flow, sends API responses. |
 | `services/authService.js` | Normalizes numbers, creates/verifies OTPs, reads/writes users, hashes passwords, creates JWTs. |
-| `services/whatsappService.js` | Connects Baileys to WhatsApp, saves QR, reconnects, and sends messages. |
+| `services/whatsappService.js` | Manages the Baileys socket, in-memory expiring QR, session lifecycle, and message sending. |
 | `config/firebase.js` | Initializes Firebase Admin and returns a cached Firestore instance. |
 | `package.json` | Dependencies and `start`/`dev` scripts. |
 | `package-lock.json` | Locked npm dependency versions. |
@@ -255,24 +272,23 @@ The signing secret comes from `JWT_SECRET`. Token lifetime is 30 days. There is 
 | `.env` | Local secrets/configuration; should never be committed. |
 | `.env.example` | Intended environment template; currently empty. |
 | `.gitignore` | Ignores dependencies, environment files, logs, and WhatsApp auth state. |
-| `qr.png` | Generated WhatsApp pairing QR image. |
 | `BACKEND_DOCUMENTATION.md` | This document. |
 
 ### Runtime/generated files
 
 `auth_info_baileys/` contains the WhatsApp multi-file authentication state. It includes credentials, keys, and device/session data. It must remain private and must not be shared or committed.
 
-## 9. Startup and deployment
+## 10. Startup and deployment
 
 ### Local/Render
 
-`npm start` runs `Server.js`. When `VERCEL` is not set, it starts the WhatsApp connection and listens on `PORT` or port `5000`. It also pings `RENDER_EXTERNAL_URL` every 14 minutes, or localhost when that variable is absent.
+`npm start` runs `Server.js`. When `VERCEL` is not set, it restores an existing WhatsApp auth session (if present) and listens on `PORT` or port `5000`. A new session and QR are started only through the admin connect endpoint. It also pings `RENDER_EXTERNAL_URL` every 14 minutes, or localhost when that variable is absent.
 
 ### Vercel
 
 Vercel loads `api/index.js`, which exports the Express app. `Server.js` is not used as the long-running entry point, so the WhatsApp connection is not started by that branch. A persistent Baileys socket is not a good fit for a normal serverless function; WhatsApp sending should run on a persistent server or use an official messaging provider for a Vercel deployment.
 
-## 10. Environment variables
+## 11. Environment variables
 
 The current `.env` contains these key names:
 
@@ -287,18 +303,18 @@ MONGO_URI
 
 `MONGO_URI` is currently unused by the source code. Firebase can alternatively be configured with `FIREBASE_SERVICE_ACCOUNT_JSON` instead of the three separate Firebase credential variables.
 
-## 11. Important production observations
+## 12. Important production observations
 
 1. There is no rate limit or maximum attempt counter for OTP verification. A request can be tried repeatedly until expiry.
 2. OTP sending has no cooldown. Repeated requests can send many WhatsApp messages.
 3. The API returns `detail: error.message` in error responses. Internal error details should be logged server-side but not returned to clients in production.
 4. CORS is configured with `origin: true` and credentials enabled. This should be restricted to the real frontend origins.
-5. `auth_info_baileys/` and `qr.png` are sensitive. Anyone with the session state may be able to use the linked WhatsApp account.
+5. `auth_info_baileys/` is sensitive. Anyone with the session state may be able to use the linked WhatsApp account.
 6. `JWT_SECRET` must be a long random production secret. If it is missing, token creation fails.
 7. The registration password hash is stored in the pending OTP document before OTP verification. It is hashed, but abandoned OTP records should be expired/deleted periodically.
 8. Firebase Admin access bypasses normal client Firestore security rules, so service-account credentials must remain server-only.
-9. The current code has no authenticated/protected business routes yet; it only implements authentication.
+9. Admin WhatsApp routes are authenticated, but the remaining business routes are not protected by this middleware.
 
-## 12. Short conclusion
+## 13. Short conclusion
 
 The current backend is a WhatsApp OTP authentication API. Firestore stores the user and a hashed temporary OTP, Baileys delivers the plain OTP through a linked WhatsApp account, and successful verification creates or verifies the user and returns a 30-day JWT. Firebase is the database layer here, not the OTP delivery or Firebase Phone Auth layer.
