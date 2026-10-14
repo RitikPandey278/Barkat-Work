@@ -88,7 +88,9 @@ The admin WhatsApp controls are exposed through:
 - `POST /api/admin/whatsapp/disconnect`
 
 After disconnecting, the old Baileys socket and its auth files are removed before a new
-QR session is created. The client should poll `/status` after `/connect` and render
+QR session is created. `/connect` is idempotent and does not delete the current session,
+so it is safe for the client to call it while polling. The client should poll `/status`
+after `/connect` and render
 `data.qr` while `data.qrAvailable` is true. A `515` disconnect is a recoverable
 Baileys restart and reuses the current auth state; a `401` after an explicit logout
 is expected and the next connect creates a fresh session.

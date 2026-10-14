@@ -21,6 +21,7 @@ let connectedNumber = null;
 let manualDisconnect = false;
 let connectionPromise = null;
 let socketGeneration = 0;
+let qrGeneration = 0;
 
 const QR_TTL_MS = 5 * 60 * 1000;
 
@@ -89,8 +90,17 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                 }
 
                 if (qr) {
+                    const currentQrGeneration = ++qrGeneration;
                     try {
-                        qrDataUrl = await QRCode.toDataURL(qr);
+                        const generatedQr = await QRCode.toDataURL(qr);
+                        if (
+                            currentGeneration !== socketGeneration ||
+                            currentQrGeneration !== qrGeneration ||
+                            socket !== currentSocket
+                        ) {
+                            return;
+                        }
+                        qrDataUrl = generatedQr;
                     } catch (error) {
                         console.error("WhatsApp QR generation error:", error.message);
                         return;
@@ -169,7 +179,14 @@ const disconnectWhatsApp = async ({ clearAuth = true, reconnect = false } = {}) 
     connectedNumber = null;
     status = "DISCONNECTED";
     if (clearAuth) {
-        await fs.promises.rm(authDir, { recursive: true, force: true });
+        // Remove every auth file synchronously before a fresh socket can be
+        // created. This prevents a stale creds/key file from being reused.
+        try {
+            fs.rmSync(authDir, { recursive: true, force: true });
+        } catch (error) {
+            console.error("WhatsApp auth cleanup error:", error.message);
+            throw error;
+        }
     }
     if (reconnect) return connectWhatsApp({ resetSession: false });
     return getStatus();
