@@ -152,7 +152,15 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                     socket = null;
                     connectedNumber = null;
                     clearQr();
-                    console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
+                    // console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
+
+                        console.error("WhatsApp disconnect details:", {
+                        statusCode,
+                        reason: lastDisconnect?.error?.message,
+                        errorName: lastDisconnect?.error?.name,
+                        status,
+                        time: new Date().toISOString()
+                    });
 
                     if (
                         manualDisconnect ||
