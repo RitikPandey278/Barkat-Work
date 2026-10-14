@@ -52,8 +52,21 @@ const scheduleReconnect = () => {
     if (manualDisconnect || reconnectTimer) return;
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        connectWhatsApp();
+        connectWhatsApp().catch((error) => {
+            console.error("WhatsApp reconnect error:", error.message);
+        });
     }, 5000);
+};
+
+const restartAfterRequired = () => {
+    if (manualDisconnect || reconnectTimer) return;
+    status = "RECONNECTING";
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWhatsApp().catch((error) => {
+            console.error("WhatsApp restart error:", error.message);
+        });
+    }, 250);
 };
 
 const connectWhatsApp = async ({ resetSession = false } = {}) => {
@@ -157,8 +170,14 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                         return;
                     }
 
-                    // 515 (restartRequired) is recoverable. Reuse the auth
-                    // state and let Baileys issue a fresh QR if required.
+                    if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
+                        // Baileys requires a brand-new socket after pairing.
+                        // Keep auth files intact: they contain the pairing
+                        // result that the replacement socket must use.
+                        restartAfterRequired();
+                        return;
+                    }
+
                     status = "RECONNECTING";
                     scheduleReconnect();
                 }
