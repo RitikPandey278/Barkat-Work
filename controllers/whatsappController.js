@@ -6,9 +6,9 @@ const getStatus = (req, res) => {
 
 const connect = async (req, res) => {
     try {
-        // A fresh session is requested only when there is no active socket.
-        // whatsappService protects an active QR from being reset by polling.
-        const data = await whatsappService.connectWhatsApp({ resetSession: true });
+        // Disconnect performs the explicit auth reset. Connect is safe to
+        // call repeatedly while the mobile client waits for the QR.
+        const data = await whatsappService.connectWhatsApp();
         return res.json({ success: true, data: whatsappService.getWhatsAppStatus() || data });
     } catch (error) {
         console.error("ADMIN WHATSAPP CONNECT ERROR:", error);

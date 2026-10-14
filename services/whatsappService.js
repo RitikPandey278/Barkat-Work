@@ -2,7 +2,8 @@ const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
-    fetchLatestBaileysVersion
+    fetchLatestBaileysVersion,
+    Browsers
 } = require("@whiskeysockets/baileys");
 const QRCode = require("qrcode");
 const path = require("path");
@@ -11,6 +12,7 @@ const pino = require("pino");
 const { getMobile, profileMatchesJob } = require("./jobMatching");
 
 const authDir = path.join(__dirname, "../auth_info_baileys");
+const qrFilePath = path.join(__dirname, "../qr.png");
 let socket = null;
 let reconnectTimer = null;
 let qrTimer = null;
@@ -22,14 +24,27 @@ let manualDisconnect = false;
 let connectionPromise = null;
 let socketGeneration = 0;
 let qrGeneration = 0;
+let qrWatchdogTimer = null;
 
 const QR_TTL_MS = 5 * 60 * 1000;
+const QR_WATCHDOG_MS = 15 * 1000;
 
 const clearQr = () => {
     if (qrTimer) clearTimeout(qrTimer);
     qrTimer = null;
     qrDataUrl = null;
     qrExpiresAt = null;
+};
+
+const clearQrWatchdog = () => {
+    if (qrWatchdogTimer) clearTimeout(qrWatchdogTimer);
+    qrWatchdogTimer = null;
+};
+
+const removeQrFile = () => {
+    fs.promises.rm(qrFilePath, { force: true }).catch((error) => {
+        console.error("WhatsApp QR file cleanup error:", error.message);
+    });
 };
 
 const getStatus = () => ({
@@ -94,18 +109,55 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                 await disconnectWhatsApp({ clearAuth: true, reconnect: false });
             }
 
+            await fs.promises.mkdir(authDir, { recursive: true });
             const { state, saveCreds } = await useMultiFileAuthState(authDir);
+            await saveCreds();
+            console.log("WhatsApp auth state initialized:", authDir);
             const { version } = await fetchLatestBaileysVersion();
+            console.log("WhatsApp protocol version loaded:", version.join("."));
             const currentGeneration = ++socketGeneration;
             const currentSocket = makeWASocket({
                 version,
                 auth: state,
-                logger: pino({ level: "silent" }),
+                browser: Browsers.ubuntu("Chrome"),
+                // Keep Baileys history-sync payloads out of the terminal.
+                // Connection errors are still logged by our handlers below.
+                logger: pino({ level: "warn" }),
                 markOnlineOnConnect: false,
-                syncFullHistory: false
+                syncFullHistory: false,
+                connectTimeoutMs: 30000
             });
 
             socket = currentSocket;
+            console.log("WhatsApp socket created; waiting for QR/open event");
+            clearQrWatchdog();
+            qrWatchdogTimer = setTimeout(() => {
+                if (
+                    currentGeneration !== socketGeneration ||
+                    socket !== currentSocket ||
+                    status !== "CONNECTING"
+                ) {
+                    return;
+                }
+
+                console.error("WhatsApp QR timeout: restarting socket for a fresh QR");
+                socket = null;
+                socketGeneration += 1;
+                try {
+                    currentSocket.ws?.close();
+                } catch (error) {
+                    console.error("WhatsApp QR timeout socket close error:", error.message);
+                }
+                clearQr();
+                status = "DISCONNECTED";
+                // Keep auth state intact. Deleting it while Baileys is still
+                // initializing can leave an empty directory and race with
+                // creds/key writes.
+                connectWhatsApp().catch((error) => {
+                    console.error("WhatsApp QR timeout reconnect error:", error.message);
+                });
+            }, QR_WATCHDOG_MS);
+
             currentSocket.ev.on("creds.update", saveCreds);
             currentSocket.ev.on("connection.update", async ({ connection, qr, lastDisconnect }) => {
                 // A logout/reconnect can emit late events. Never let an old
@@ -115,6 +167,8 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                 }
 
                 if (qr) {
+                    clearQrWatchdog();
+                    console.log("WhatsApp QR event received");
                     const currentQrGeneration = ++qrGeneration;
                     try {
                         const generatedQr = await QRCode.toDataURL(qr);
@@ -126,6 +180,12 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                             return;
                         }
                         qrDataUrl = generatedQr;
+                        await QRCode.toFile(qrFilePath, qr, {
+                            type: "png",
+                            width: 512,
+                            margin: 2
+                        });
+                        console.log("WhatsApp QR saved locally:", qrFilePath);
                     } catch (error) {
                         console.error("WhatsApp QR generation error:", error.message);
                         return;
@@ -136,31 +196,36 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                     qrTimer = setTimeout(() => {
                         if (currentGeneration !== socketGeneration) return;
                         clearQr();
+                        removeQrFile();
                         status = "DISCONNECTED";
                     }, QR_TTL_MS);
                 }
 
                 if (connection === "open") {
+                    clearQrWatchdog();
                     clearQr();
+                    removeQrFile();
                     status = "CONNECTED";
                     connectedNumber = currentSocket.user?.id?.split(":")[0] || null;
                     console.log("WhatsApp connected");
                 }
 
                 if (connection === "close") {
+                    clearQrWatchdog();
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
                     socket = null;
                     connectedNumber = null;
                     clearQr();
-                    // console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
+                    removeQrFile();
+                    console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
 
-                        console.error("WhatsApp disconnect details:", {
-                        statusCode,
-                        reason: lastDisconnect?.error?.message,
-                        errorName: lastDisconnect?.error?.name,
-                        status,
-                        time: new Date().toISOString()
-                    });
+                    console.error("WhatsApp disconnect details:", {
+    statusCode,
+    reason: lastDisconnect?.error?.message,
+    errorName: lastDisconnect?.error?.name,
+    status,
+    time: new Date().toISOString()
+});
 
                     if (
                         manualDisconnect ||
@@ -210,6 +275,7 @@ const disconnectWhatsApp = async ({ clearAuth = true, reconnect = false } = {}) 
     manualDisconnect = !reconnect;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;
+    clearQrWatchdog();
     clearQr();
     const oldSocket = socket;
     socket = null;

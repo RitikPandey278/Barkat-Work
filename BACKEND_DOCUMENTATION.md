@@ -94,7 +94,9 @@ reports `401` (`loggedOut`), the invalid auth files are removed automatically. T
 should poll `/status` after `/connect` and render
 `data.qr` while `data.qrAvailable` is true. A `515` disconnect is a recoverable
 Baileys restart and reuses the current auth state; a `401` after an explicit logout
-is expected and the next connect creates a fresh session.
+is expected and the next connect creates a fresh session. If a new socket does not
+emit a QR or open within 15 seconds, the service clears that stalled socket and
+automatically starts a fresh QR attempt.
 
 ## 4. Send OTP endpoint
 

@@ -1,7 +1,5 @@
 require("dotenv").config();
 const axios = require("axios");
-const fs = require("fs");
-const path = require("path");
 const app = require("./app");
 const { connectWhatsApp } = require("./services/whatsappService");
 
@@ -17,13 +15,11 @@ app.get("/", (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 if (!process.env.VERCEL) {
-  // Existing auth session ko restore karein; naya QR admin Connect se generate karega.
-  const authDir = path.join(__dirname, "auth_info_baileys");
-  if (fs.existsSync(authDir)) {
-    connectWhatsApp().catch((error) => {
-      console.error("WhatsApp startup error:", error.message);
-    });
-  }
+  // Start even without auth files. Baileys creates the auth directory and
+  // emits a fresh QR for a new WhatsApp session.
+  connectWhatsApp().catch((error) => {
+    console.error("WhatsApp startup error:", error.message);
+  });
 
   app.listen(PORT, () => {
     console.log(`BarkatWork API listening on port ${PORT}`);
