@@ -128,6 +128,16 @@ function getMissingFields(profile) {
     return missing;
 }
 
+function removeNamaste(text) {
+    const cleaned = String(text || "")
+        .replace(/\u0928\u092e\u0938\u094d\u0924\u0947/gi, "")
+        .replace(/\s{2,}/g, " ")
+        .replace(/\s+([,!?।])/g, "$1")
+        .trim();
+
+    return cleaned || "Please share the next profile detail.";
+}
+
 exports.processProfileConversation = async ({
     message,
     history = [],
@@ -280,7 +290,7 @@ unknown fields if returning the full shape.
 
     return {
         success: true,
-        reply: String(
+        reply: removeNamaste(
             parsed.reply || "आपकी जानकारी समझ गया। आगे की जानकारी बताइए।"
         ),
         profile: updatedProfile,

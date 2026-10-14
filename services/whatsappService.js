@@ -20,6 +20,7 @@ let status = "DISCONNECTED";
 let connectedNumber = null;
 let manualDisconnect = false;
 let connectionPromise = null;
+let socketGeneration = 0;
 
 const QR_TTL_MS = 5 * 60 * 1000;
 
@@ -58,62 +59,88 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
     if (connectionPromise) return connectionPromise;
 
     connectionPromise = (async () => {
-    try {
-        manualDisconnect = false;
-        clearQr();
-        status = "CONNECTING";
-        if (resetSession) {
-            await disconnectWhatsApp({ clearAuth: true, reconnect: false });
-        }
-        const { state, saveCreds } = await useMultiFileAuthState(authDir);
-        const { version } = await fetchLatestBaileysVersion();
-        socket = makeWASocket({
-            version,
-            auth: state,
-            logger: pino({ level: "silent" }),
-            markOnlineOnConnect: false,
-            syncFullHistory: false
-        });
+        try {
+            manualDisconnect = false;
+            clearQr();
+            status = "CONNECTING";
 
-        socket.ev.on("creds.update", saveCreds);
-        socket.ev.on("connection.update", async ({ connection, qr, lastDisconnect }) => {
-            if (qr) {
-                status = "QR_READY";
-                qrDataUrl = await QRCode.toDataURL(qr);
-                qrExpiresAt = Date.now() + QR_TTL_MS;
-                if (qrTimer) clearTimeout(qrTimer);
-                qrTimer = setTimeout(() => {
-                    clearQr();
-                    status = "DISCONNECTED";
-                }, QR_TTL_MS);
+            if (resetSession) {
+                await disconnectWhatsApp({ clearAuth: true, reconnect: false });
             }
-            if (connection === "open") {
-                clearQr();
-                status = "CONNECTED";
-                connectedNumber = socket?.user?.id?.split(":")[0] || null;
-                console.log("WhatsApp connected");
-            }
-            if (connection === "close") {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                socket = null;
-                connectedNumber = null;
-                clearQr();
-                console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
-                if (manualDisconnect || statusCode === 440 || statusCode === DisconnectReason.loggedOut) {
-                    status = "DISCONNECTED";
+
+            const { state, saveCreds } = await useMultiFileAuthState(authDir);
+            const { version } = await fetchLatestBaileysVersion();
+            const currentGeneration = ++socketGeneration;
+            const currentSocket = makeWASocket({
+                version,
+                auth: state,
+                logger: pino({ level: "silent" }),
+                markOnlineOnConnect: false,
+                syncFullHistory: false
+            });
+
+            socket = currentSocket;
+            currentSocket.ev.on("creds.update", saveCreds);
+            currentSocket.ev.on("connection.update", async ({ connection, qr, lastDisconnect }) => {
+                // A logout/reconnect can emit late events. Never let an old
+                // socket mutate the state of the current connection.
+                if (currentGeneration !== socketGeneration || socket !== currentSocket) {
                     return;
                 }
-                status = "RECONNECTING";
-                scheduleReconnect();
-            }
-        });
-        return getStatus();
-    } catch (error) {
-        status = "ERROR";
-        console.error("WhatsApp connection error:", error.message);
-        scheduleReconnect();
-        throw error;
-    }
+
+                if (qr) {
+                    try {
+                        qrDataUrl = await QRCode.toDataURL(qr);
+                    } catch (error) {
+                        console.error("WhatsApp QR generation error:", error.message);
+                        return;
+                    }
+                    status = "QR_READY";
+                    qrExpiresAt = Date.now() + QR_TTL_MS;
+                    if (qrTimer) clearTimeout(qrTimer);
+                    qrTimer = setTimeout(() => {
+                        if (currentGeneration !== socketGeneration) return;
+                        clearQr();
+                        status = "DISCONNECTED";
+                    }, QR_TTL_MS);
+                }
+
+                if (connection === "open") {
+                    clearQr();
+                    status = "CONNECTED";
+                    connectedNumber = currentSocket.user?.id?.split(":")[0] || null;
+                    console.log("WhatsApp connected");
+                }
+
+                if (connection === "close") {
+                    const statusCode = lastDisconnect?.error?.output?.statusCode;
+                    socket = null;
+                    connectedNumber = null;
+                    clearQr();
+                    console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
+
+                    if (
+                        manualDisconnect ||
+                        statusCode === DisconnectReason.connectionReplaced ||
+                        statusCode === DisconnectReason.loggedOut
+                    ) {
+                        status = "DISCONNECTED";
+                        return;
+                    }
+
+                    // 515 (restartRequired) is recoverable. Reuse the auth
+                    // state and let Baileys issue a fresh QR if required.
+                    status = "RECONNECTING";
+                    scheduleReconnect();
+                }
+            });
+            return getStatus();
+        } catch (error) {
+            status = "ERROR";
+            console.error("WhatsApp connection error:", error.message);
+            scheduleReconnect();
+            throw error;
+        }
     })();
 
     try {
@@ -128,15 +155,17 @@ const disconnectWhatsApp = async ({ clearAuth = true, reconnect = false } = {}) 
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     clearQr();
-    if (socket) {
+    const oldSocket = socket;
+    socket = null;
+    socketGeneration += 1;
+    if (oldSocket) {
         try {
-            if (clearAuth) await socket.logout();
-            else socket.ws?.close();
+            if (clearAuth) await oldSocket.logout();
+            else oldSocket.ws?.close();
         } catch (error) {
             console.error("WhatsApp disconnect error:", error.message);
         }
     }
-    socket = null;
     connectedNumber = null;
     status = "DISCONNECTED";
     if (clearAuth) {

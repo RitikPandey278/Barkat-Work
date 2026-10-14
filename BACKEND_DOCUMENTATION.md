@@ -79,6 +79,20 @@ One mobile number has one active OTP record. Sending another OTP overwrites the 
 
 The registration or login OTP is therefore sent through the linked WhatsApp account, not through SMS and not through Firebase Auth.
 
+### Admin WhatsApp reconnect behavior
+
+The admin WhatsApp controls are exposed through:
+
+- `GET /api/admin/whatsapp/status`
+- `POST /api/admin/whatsapp/connect`
+- `POST /api/admin/whatsapp/disconnect`
+
+After disconnecting, the old Baileys socket and its auth files are removed before a new
+QR session is created. The client should poll `/status` after `/connect` and render
+`data.qr` while `data.qrAvailable` is true. A `515` disconnect is a recoverable
+Baileys restart and reuses the current auth state; a `401` after an explicit logout
+is expected and the next connect creates a fresh session.
+
 ## 4. Send OTP endpoint
 
 ### URL
@@ -236,6 +250,37 @@ After successful verification, the server signs this payload:
 The signing secret comes from `JWT_SECRET`. Token lifetime is 30 days. Admin WhatsApp routes verify this token and require `role: "ADMIN"`.
 
 ## 8. Admin WhatsApp connection
+
+### Admin phone OTP login
+
+The Android admin login must use the existing admin's phone number:
+
+```text
+POST /api/admin/auth/send-otp
+```
+
+Request:
+
+```json
+{ "mobile": "9876543210" }
+```
+
+After the OTP arrives on WhatsApp, verify it with:
+
+```text
+POST /api/admin/auth/verify-otp
+```
+
+Request:
+
+```json
+{
+  "mobile": "9876543210",
+  "otp": "123456"
+}
+```
+
+The verify response returns a JWT whose role is `ADMIN`. Store that token and send it as `Authorization: Bearer <token>` to the WhatsApp management routes. The phone must already belong to a Firestore `Users` document whose `role` is `ADMIN`.
 
 The admin panel can manage the single linked WhatsApp session without editing backend files or redeploying:
 

@@ -4,6 +4,7 @@ const authRoutes = require("./routers/authRoutes");
 const aiRoutes = require('./routers/aiRoutes');
 const jobRoutes = require('./routers/jobRoutes');
 const whatsappRoutes = require("./routers/whatsappRoutes");
+const adminAuthRoutes = require("./routers/adminAuthRoutes");
 
 const app = express();
 app.disable("x-powered-by");
@@ -17,6 +18,7 @@ app.use('/api/ai', aiRoutes);
 
 app.use('/api/jobs', jobRoutes);
 app.use("/api/admin/whatsapp", whatsappRoutes);
+app.use("/api/admin/auth", adminAuthRoutes);
 
 // 🌐 Deep Link Web Redirect Page
 app.get('/job/:id', (req, res) => {
