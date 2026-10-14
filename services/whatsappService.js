@@ -57,6 +57,18 @@ const scheduleReconnect = () => {
 };
 
 const connectWhatsApp = async ({ resetSession = false } = {}) => {
+    // Repeated connect calls are used by the mobile client while it polls for
+    // the QR. Never replace an active socket or invalidate its QR.
+    if (
+        socket &&
+        (status === "CONNECTING" ||
+            status === "QR_READY" ||
+            status === "CONNECTED" ||
+            status === "RECONNECTING")
+    ) {
+        return getStatus();
+    }
+
     if (connectionPromise) return connectionPromise;
 
     connectionPromise = (async () => {
@@ -135,6 +147,13 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                         statusCode === DisconnectReason.loggedOut
                     ) {
                         status = "DISCONNECTED";
+                        if (statusCode === DisconnectReason.loggedOut) {
+                            try {
+                                fs.rmSync(authDir, { recursive: true, force: true });
+                            } catch (error) {
+                                console.error("WhatsApp invalid auth cleanup error:", error.message);
+                            }
+                        }
                         return;
                     }
 
