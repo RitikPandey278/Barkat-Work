@@ -11,7 +11,7 @@ const {
 // Import your EXISTING admin-auth middleware here.
 // Example only: const requireAdmin = require("../middleware/authMiddleware");
 // Verify that it rejects non-admin users before enabling these routes.
-const requireAdmin = require("../middleware/requireAdmin");
+const { requireAdmin } = require("../middleware/adminMiddleware");
 
 router.get("/templates", requireAdmin, (req, res) => {
     res.json({
