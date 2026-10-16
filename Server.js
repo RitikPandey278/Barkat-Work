@@ -2,6 +2,7 @@ require("dotenv").config();
 const axios = require("axios");
 const app = require("./app");
 const { connectWhatsApp } = require("./services/whatsappService");
+const adminNotificationRoutes = require("./routes/adminNotificationRoutes");
 
 // Root Health-Check Route (Render aur Vercel uptime check ke liye)
 app.get("/", (req, res) => {
@@ -37,5 +38,10 @@ if (!process.env.VERCEL) {
     }, 14 * 60 * 1000); // Har 14 minute mein ping karega
   });
 }
+
+app.use(
+    "/api/admin/notifications",
+    adminNotificationRoutes
+);
 
 module.exports = app;
