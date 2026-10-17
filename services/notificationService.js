@@ -50,9 +50,7 @@ async function sendPush({ title, message, target, type }) {
   };
 
   if (target === "all") {
-    // OneSignal dashboard ke Total Subscriptions ke saath
-    // test karne ke liye subscribed segment use karein.
-    payload.included_segments = ["Subscribed Users"];
+    payload.included_segments = ["Total Subscriptions"];
   } else if (target === "workers" || target === "recruiters") {
     payload.filters = [
       {
