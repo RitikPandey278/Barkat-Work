@@ -206,6 +206,18 @@ The response does not return the password hash or OTP hash.
 
 ## 6. Firestore usage
 
+## 7. AI search performance
+
+`POST /api/ai/search` reads only the selected `Jobs` or `Seekers` collection.
+Gemini filter extraction and the Firestore read run in parallel. Gemini has a
+5-second request timeout; if it is unavailable, the endpoint logs the failure
+and performs a basic text search using the user's words instead of returning a
+timeout error.
+
+To keep response time and payload size bounded, each request reads at most 300
+records and returns at most 50 matches. Repeated filter extraction for the same
+search mode and query is cached in memory for five minutes.
+
 ### `Users` collection
 
 Typical user document fields:

@@ -2,6 +2,12 @@
 const axios = require("axios");
 const { getFirestore } = require("../config/firebase");
 
+const AI_SEARCH_TIMEOUT_MS = 5000;
+const SEARCH_RECORD_LIMIT = 300;
+const SEARCH_RESULT_LIMIT = 50;
+const FILTER_CACHE_TTL_MS = 5 * 60 * 1000;
+const filterCache = new Map();
+
 // Normalize text for case-insensitive Hindi/English matching.
 function normalize(value) {
     return String(value ?? "")
@@ -181,7 +187,7 @@ ${JSON.stringify(userQuery)}
             headers: {
                 "Content-Type": "application/json"
             },
-            timeout: 30000
+            timeout: AI_SEARCH_TIMEOUT_MS
         }
     );
 
@@ -229,6 +235,64 @@ ${JSON.stringify(userQuery)}
     return params;
 }
 
+function getFallbackFilters(userQuery) {
+    const query = String(userQuery || "").trim();
+    const stopWords = new Set([
+        "a", "an", "and", "for", "in", "me", "my", "near", "the", "to",
+        "वाला", "वाली", "वाले", "के", "में", "मुझे", "पास", "और"
+    ]);
+    const searchTerms = normalize(query)
+        .split(" ")
+        .filter(word => word.length >= 3 && !stopWords.has(word));
+
+    return {
+        intent: query,
+        category: "",
+        searchTerms: uniqueStrings(searchTerms.length ? searchTerms : [query]),
+        location: "",
+        locationVariants: [],
+        budget: 0,
+        budgetPeriod: "unknown"
+    };
+}
+
+async function getSearchFilters(userQuery, searchType, apiKey) {
+    const cacheKey = `${searchType}:${normalize(userQuery)}`;
+    const cached = filterCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.params;
+    }
+
+    try {
+        const params = await extractSearchFilters(userQuery, searchType, apiKey);
+        filterCache.set(cacheKey, {
+            params,
+            expiresAt: Date.now() + FILTER_CACHE_TTL_MS
+        });
+        return params;
+    } catch (error) {
+        // Search should still work when Gemini is slow or temporarily unavailable.
+        console.error("BARKAT AI FILTER FALLBACK:", {
+            message: error.message,
+            status: error.response?.status
+        });
+        return getFallbackFilters(userQuery);
+    }
+}
+
+async function readSearchRecords(db, collectionName) {
+    const snapshot = await db
+        .collection(collectionName)
+        .limit(SEARCH_RECORD_LIMIT)
+        .get();
+
+    return snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+    }));
+}
+
 exports.parseQueryAndSearch = async (userQuery, searchType) => {
     try {
         const apiKey = process.env.GEMINI_API_KEY;
@@ -247,31 +311,25 @@ exports.parseQueryAndSearch = async (userQuery, searchType) => {
 
         const db = getFirestore();
 
-        // 1. Understand the query dynamically using Gemini.
-        const params = await extractSearchFilters(
-            String(userQuery).trim(),
-            type,
-            apiKey
-        );
-
-        // 2. Search only the collection appropriate to the app mode.
+        const query = String(userQuery).trim();
         const collectionName = type === "JOB" ? "Jobs" : "Seekers";
-        const snapshot = await db.collection(collectionName).get();
 
-        const records = snapshot.docs
-            .map(doc => ({
-                ...doc.data(),
-                id: doc.id
-            }))
-            .filter(record =>
-                type !== "JOB" || isAvailableJob(record)
-            );
+        // Gemini and Firestore are independent network calls. Running them
+        // together removes the old serial network penalty.
+        const [params, records] = await Promise.all([
+            getSearchFilters(query, type, apiKey),
+            readSearchRecords(db, collectionName)
+        ]);
+
+        const availableRecords = records.filter(record =>
+            type !== "JOB" || isAvailableJob(record)
+        );
 
         const terms = params.searchTerms;
         const locations = params.locationVariants;
 
         // 3. Match the profession/skill dynamically.
-        let candidates = records;
+        let candidates = availableRecords;
 
         if (terms.length) {
             candidates = candidates.filter(record =>
@@ -321,6 +379,9 @@ exports.parseQueryAndSearch = async (userQuery, searchType) => {
                 matchedTier += "_budget_fallback";
             }
         }
+
+        // Keep response size bounded so a large match cannot delay the client.
+        results = results.slice(0, SEARCH_RESULT_LIMIT);
 
         // 6. Return a stable response for Android.
         return {
