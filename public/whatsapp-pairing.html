@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WhatsApp Pairing | BarkatWork</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --green: #128c7e;
+            --dark-green: #075e54;
+            --background: #f3f7f6;
+            --text: #18302d;
+            --muted: #667b77;
+            --border: #d8e4e1;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background: linear-gradient(145deg, #e7f5f1, var(--background));
+            color: var(--text);
+            font-family: Arial, sans-serif;
+        }
+
+        .card {
+            width: min(100%, 430px);
+            padding: 32px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            box-shadow: 0 14px 40px rgba(7, 94, 84, .12);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 22px;
+        }
+
+        .icon {
+            width: 44px;
+            height: 44px;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            background: var(--green);
+            color: #fff;
+            font-size: 24px;
+        }
+
+        h1 { margin: 0; font-size: 23px; }
+        .intro { margin: 8px 0 26px; color: var(--muted); line-height: 1.5; }
+        label { display: block; margin: 16px 0 7px; font-weight: 700; font-size: 14px; }
+
+        input {
+            width: 100%;
+            padding: 13px 14px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            outline: none;
+            font-size: 16px;
+        }
+
+        input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(18, 140, 126, .12); }
+
+        button {
+            width: 100%;
+            margin-top: 22px;
+            padding: 14px;
+            border: 0;
+            border-radius: 10px;
+            background: var(--dark-green);
+            color: #fff;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        button:disabled { cursor: wait; opacity: .65; }
+        .result, .error { display: none; margin-top: 20px; padding: 14px; border-radius: 10px; }
+        .result { background: #e9f8f3; color: var(--dark-green); text-align: center; }
+        .error { background: #fff0f0; color: #a42626; }
+        .code { margin: 10px 0; font-size: 30px; letter-spacing: 5px; font-weight: 800; }
+        .help { margin: 16px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <main class="card">
+        <div class="brand">
+            <div class="icon">◉</div>
+            <h1>WhatsApp Pairing</h1>
+        </div>
+        <p class="intro">Enter the WhatsApp number that you want to connect with BarkatWork.</p>
+
+        <section id="setupSection">
+            <label for="adminName">First admin name</label>
+            <input id="adminName" type="text" placeholder="Admin name" autocomplete="name">
+            <label for="setupKey">First-admin setup key</label>
+            <input id="setupKey" type="password" placeholder="Value from ADMIN_SETUP_KEY" autocomplete="off">
+            <button id="setupButton" type="button">Create first admin</button>
+        </section>
+
+        <form id="pairingForm">
+            <label for="phoneNumber">WhatsApp number</label>
+            <input id="phoneNumber" name="phoneNumber" type="tel"
+                   placeholder="919876543210" autocomplete="tel" required>
+
+            <label for="adminToken">Admin token</label>
+            <input id="adminToken" name="adminToken" type="password"
+                   placeholder="Paste admin JWT token" autocomplete="off" required>
+
+            <button id="generateButton" type="submit">Generate pairing code</button>
+        </form>
+
+        <section id="result" class="result" aria-live="polite">
+            <div>Your pairing code</div>
+            <div id="pairingCode" class="code"></div>
+            <div>WhatsApp → Linked devices → Link with phone number instead</div>
+        </section>
+        <div id="error" class="error" role="alert"></div>
+        <p class="help">The code is short-lived. Enter it on the phone immediately after generating it.</p>
+    </main>
+
+    <script>
+        const form = document.getElementById("pairingForm");
+        const button = document.getElementById("generateButton");
+        const result = document.getElementById("result");
+        const code = document.getElementById("pairingCode");
+        const errorBox = document.getElementById("error");
+        const setupButton = document.getElementById("setupButton");
+
+        setupButton.addEventListener("click", async () => {
+            errorBox.style.display = "none";
+            setupButton.disabled = true;
+            setupButton.textContent = "Creating...";
+            try {
+                const response = await fetch("/api/admin/whatsapp/setup-admin", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        name: document.getElementById("adminName").value.trim(),
+                        mobile: document.getElementById("phoneNumber").value.trim(),
+                        setupKey: document.getElementById("setupKey").value
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || "Unable to create admin.");
+                }
+                document.getElementById("adminToken").value = data.token;
+                document.getElementById("setupSection").style.display = "none";
+                alert("Admin created. The token has been filled automatically.");
+            } catch (error) {
+                errorBox.textContent = error.message;
+                errorBox.style.display = "block";
+            } finally {
+                setupButton.disabled = false;
+                setupButton.textContent = "Create first admin";
+            }
+        });
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            result.style.display = "none";
+            errorBox.style.display = "none";
+            button.disabled = true;
+            button.textContent = "Generating...";
+
+            try {
+                const response = await fetch("/api/admin/whatsapp/pairing-code", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${document.getElementById("adminToken").value.trim()}`
+                    },
+                    body: JSON.stringify({
+                        phoneNumber: document.getElementById("phoneNumber").value.trim()
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || "Unable to generate pairing code.");
+                }
+                code.textContent = data.data.pairingCode;
+                result.style.display = "block";
+            } catch (error) {
+                errorBox.textContent = error.message;
+                errorBox.style.display = "block";
+            } finally {
+                button.disabled = false;
+                button.textContent = "Generate pairing code";
+            }
+        });
+    </script>
+</body>
+</html>

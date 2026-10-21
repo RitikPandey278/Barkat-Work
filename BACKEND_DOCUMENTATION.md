@@ -85,6 +85,8 @@ The admin WhatsApp controls are exposed through:
 
 - `GET /api/admin/whatsapp/status`
 - `POST /api/admin/whatsapp/connect`
+- `POST /api/admin/whatsapp/pairing-code` with `{ "phoneNumber": "919876543210" }`
+- `POST /api/admin/whatsapp/setup-admin` for one-time first-admin setup
 - `POST /api/admin/whatsapp/disconnect`
 
 After disconnecting, the old Baileys socket and its auth files are removed before a new
@@ -92,11 +94,23 @@ QR session is created. `/connect` requests a fresh session only when no socket i
 repeated calls while a QR is being displayed do not invalidate that QR. If Baileys
 reports `401` (`loggedOut`), the invalid auth files are removed automatically. The client
 should poll `/status` after `/connect` and render
-`data.qr` while `data.qrAvailable` is true. A `515` disconnect is a recoverable
+`data.qr` while `data.qrAvailable` is true. The latest QR is also written to
+`backend/qr.png`; the file is overwritten when Baileys rotates the QR. A `515` disconnect is a recoverable
 Baileys restart and reuses the current auth state; a `401` after an explicit logout
-is expected and the next connect creates a fresh session. If a new socket does not
-emit a QR or open within 15 seconds, the service clears that stalled socket and
-automatically starts a fresh QR attempt.
+is expected and the next connect creates a fresh session. The local socket is not
+force-closed while waiting for the user to scan the QR.
+
+Instead of sharing a QR image, request a pairing code with
+`POST /api/admin/whatsapp/pairing-code`. The number must include the country
+code (or be a 10-digit Indian number). Enter the returned code on the phone in
+`WhatsApp > Linked devices > Link with phone number`. The latest code is also
+written to `backend/pairing-code.txt` and is removed after a successful connection.
+
+For a new installation, set `ADMIN_SETUP_KEY` in `.env` and open
+`/admin/whatsapp`. The page can use that key to create the first Firestore
+`Users` record with `role: "ADMIN"` and returns a JWT automatically. The setup
+endpoint refuses to run when an admin already exists. Remove or rotate
+`ADMIN_SETUP_KEY` after the first admin is created.
 
 ## 4. Send OTP endpoint
 
@@ -344,7 +358,7 @@ The WhatsApp socket requires a persistent server process. It should not be hoste
 
 ### Local/Render
 
-`npm start` runs `Server.js`. When `VERCEL` is not set, it restores an existing WhatsApp auth session (if present) and listens on `PORT` or port `5000`. A new session and QR are started only through the admin connect endpoint. It also pings `RENDER_EXTERNAL_URL` every 14 minutes, or localhost when that variable is absent.
+From the `backend` directory, `npm start` runs `Server.js`. When `VERCEL` is not set, it restores an existing WhatsApp auth session (if present) and listens on `PORT` or port `5000`. A new session and QR are started automatically at startup and can also be requested through the admin connect endpoint. The QR is available through the protected status endpoint and is also printed in the terminal. It also pings `RENDER_EXTERNAL_URL` every 14 minutes, or localhost when that variable is absent.
 
 ### Vercel
 

@@ -11,6 +11,8 @@ const pino = require("pino");
 const { getMobile, profileMatchesJob } = require("./jobMatching");
 
 const authDir = path.join(__dirname, "../auth_info_baileys");
+const qrFilePath = path.join(__dirname, "../qr.png");
+const pairingCodeFilePath = path.join(__dirname, "../pairing-code.txt");
 let socket = null;
 let reconnectTimer = null;
 let qrTimer = null;
@@ -18,6 +20,7 @@ let qrDataUrl = null;
 let qrExpiresAt = null;
 let status = "DISCONNECTED";
 let connectedNumber = null;
+let pairingCode = null;
 let manualDisconnect = false;
 let connectionPromise = null;
 let socketGeneration = 0;
@@ -36,10 +39,33 @@ const getStatus = () => ({
     status,
     connected: status === "CONNECTED",
     connectedNumber,
+    pairingCode,
     qr: qrDataUrl,
     qrExpiresAt,
     qrAvailable: Boolean(qrDataUrl && qrExpiresAt > Date.now())
 });
+
+const normalizePairingPhoneNumber = (phoneNumber) => {
+    const digits = String(phoneNumber || "").replace(/\D/g, "");
+    if (digits.length === 10) return `91${digits}`;
+    if (/^\d{11,15}$/.test(digits)) return digits;
+    throw new Error("Enter a valid WhatsApp number with country code.");
+};
+
+const requestPairingCode = async (phoneNumber) => {
+    const number = normalizePairingPhoneNumber(phoneNumber);
+    await connectWhatsApp();
+
+    if (!socket || typeof socket.requestPairingCode !== "function") {
+        throw new Error("WhatsApp connection is not ready for a pairing code.");
+    }
+
+    const code = await socket.requestPairingCode(number);
+    pairingCode = code;
+    fs.writeFileSync(pairingCodeFilePath, `${code}\n`, "utf8");
+    console.log(`WhatsApp pairing code saved to ${pairingCodeFilePath}`);
+    return code;
+};
 
 const normalizeRecipient = (mobile) => {
     const digits = String(mobile || "").replace(/\D/g, "");
@@ -126,6 +152,12 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                             return;
                         }
                         qrDataUrl = generatedQr;
+                        await QRCode.toFile(qrFilePath, qr, {
+                            type: "png",
+                            width: 300,
+                            margin: 1
+                        });
+                        console.log(`WhatsApp QR image saved to ${qrFilePath}`);
                     } catch (error) {
                         console.error("WhatsApp QR generation error:", error.message);
                         return;
@@ -142,6 +174,12 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
 
                 if (connection === "open") {
                     clearQr();
+                    pairingCode = null;
+                    try {
+                        fs.rmSync(pairingCodeFilePath, { force: true });
+                    } catch (error) {
+                        console.error("WhatsApp pairing code cleanup error:", error.message);
+                    }
                     status = "CONNECTED";
                     connectedNumber = currentSocket.user?.id?.split(":")[0] || null;
                     console.log("WhatsApp connected");
@@ -151,6 +189,12 @@ const connectWhatsApp = async ({ resetSession = false } = {}) => {
                     const statusCode = lastDisconnect?.error?.output?.statusCode;
                     socket = null;
                     connectedNumber = null;
+                    pairingCode = null;
+                    try {
+                        fs.rmSync(pairingCodeFilePath, { force: true });
+                    } catch (error) {
+                        console.error("WhatsApp pairing code cleanup error:", error.message);
+                    }
                     clearQr();
                     console.log(`WhatsApp disconnected (${statusCode || "unknown"})`);
 
@@ -223,6 +267,12 @@ const disconnectWhatsApp = async ({ clearAuth = true, reconnect = false } = {}) 
         }
     }
     connectedNumber = null;
+    pairingCode = null;
+    try {
+        fs.rmSync(pairingCodeFilePath, { force: true });
+    } catch (error) {
+        console.error("WhatsApp pairing code cleanup error:", error.message);
+    }
     status = "DISCONNECTED";
     if (clearAuth) {
         // Remove every auth file synchronously before a fresh socket can be
@@ -354,6 +404,7 @@ ${playStoreLink}`;
 
 module.exports = {
     connectWhatsApp,
+    requestPairingCode,
     disconnectWhatsApp,
     getWhatsAppStatus,
     sendWhatsAppMessage,
